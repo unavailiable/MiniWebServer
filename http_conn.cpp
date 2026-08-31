@@ -95,9 +95,10 @@ void http_conn::init()
     m_checked_idx = 0;
     m_read_idx = 0;
     m_write_idx = 0;
+    m_file_address = NULL;
 
     bzero(m_read_buf, READ_BUFFER_SIZE);
-    bzero(m_write_buf, READ_BUFFER_SIZE);
+    bzero(m_write_buf, WRITE_BUFFER_SIZE);
     bzero(m_real_file, FILENAME_LEN);
 }
 
@@ -140,11 +141,6 @@ http_conn::LINE_STATUS http_conn::parse_line() {
             }
             return LINE_BAD;
         } else if( temp == '\n' )  {
-            if( ( m_checked_idx > 1) && ( m_read_buf[ m_checked_idx - 1 ] == '\r' ) ) {
-                m_read_buf[ m_checked_idx-1 ] = '\0';
-                m_read_buf[ m_checked_idx++ ] = '\0';
-                return LINE_OK;
-            }
             return LINE_BAD;
         }
     }
@@ -278,6 +274,11 @@ http_conn::HTTP_CODE http_conn::process_read() {
             }
         }
     }
+
+    if (line_status == LINE_BAD) {
+         return BAD_REQUEST;
+    }
+
     return NO_REQUEST;
 }
 
@@ -290,7 +291,21 @@ http_conn::HTTP_CODE http_conn::do_request()
     strcpy( m_real_file, doc_root );
     int len = strlen( doc_root );
     strncpy( m_real_file + len, m_url, FILENAME_LEN - len - 1 );
-    // 获取m_real_file文件的相关的状态信息，-1失败，0成功
+    m_real_file[FILENAME_LEN - 1] = '\0';
+   
+    // 防止路径穿越
+    char real_path[FILENAME_LEN];
+
+    if (realpath(m_real_file, real_path))
+    {
+        if (strncmp(real_path, doc_root, len) != 0 ||
+            (real_path[len] != '/' && real_path[len] != '\0'))
+        {
+            return NO_RESOURCE;
+        }
+    }
+
+     // 获取m_real_file文件的相关的状态信息，-1失败，0成功
     if ( stat( m_real_file, &m_file_stat ) < 0 ) {
         return NO_RESOURCE;
     }
@@ -351,7 +366,7 @@ bool http_conn::write()
         bytes_have_send += temp;
         bytes_to_send -= temp;
 
-        if (bytes_have_send >= m_iv[0].iov_len)
+        if (bytes_have_send >= m_write_idx)
         {
             m_iv[0].iov_len = 0;
             m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);

@@ -54,20 +54,28 @@ threadpool< T >::threadpool(int thread_number, int max_requests) :
     }
 
     m_threads = new pthread_t[m_thread_number];
-    if(!m_threads) {
-        throw std::exception();
-    }
 
-    // 创建thread_number 个线程，并将他们设置为脱离线程。
+
+    // 创建thread_number 个线程
     for ( int i = 0; i < thread_number; ++i ) {
         printf( "create the %dth thread\n", i);
         if(pthread_create(m_threads + i, NULL, worker, this ) != 0) {
+            m_queuelocker.lock();
+            m_stop = true;
+            m_queuelocker.unlock();
+
+            // 唤醒已经创建的线程
+            for (int j = 0; j < i; ++j) {
+                m_queuestat.post();
+            }
+
+            // 等它们退出
+            for (int j = 0; j < i; ++j) {
+                pthread_join(m_threads[j], nullptr);
+            }
+             
             delete [] m_threads;
-            throw std::exception();
-        }
-        
-        if( pthread_detach( m_threads[i] ) ) {
-            delete [] m_threads;
+            m_threads = nullptr;
             throw std::exception();
         }
     }
@@ -75,8 +83,19 @@ threadpool< T >::threadpool(int thread_number, int max_requests) :
 
 template< typename T >
 threadpool< T >::~threadpool() {
-    delete [] m_threads;
+    m_queuelocker.lock();
     m_stop = true;
+    m_queuelocker.unlock();
+
+    for ( int i = 0; i < m_thread_number; ++i ) {
+        m_queuestat.post();
+    }
+
+    for ( int i = 0; i < m_thread_number; ++i ) {
+        pthread_join(m_threads[i], NULL);
+    }
+
+    delete [] m_threads;
 }
 
 template< typename T >
@@ -84,7 +103,7 @@ bool threadpool< T >::append( T* request )
 {
     // 操作工作队列时一定要加锁，因为它被所有线程共享。
     m_queuelocker.lock();
-    if ( m_workqueue.size() > m_max_requests ) {
+    if ( m_workqueue.size() >= m_max_requests ) {
         m_queuelocker.unlock();
         return false;
     }
@@ -105,15 +124,25 @@ void* threadpool< T >::worker( void* arg )
 template< typename T >
 void threadpool< T >::run() {
 
-    while (!m_stop) {
+    while (true) {
+
         m_queuestat.wait();
+
         m_queuelocker.lock();
-        if ( m_workqueue.empty() ) {
+        
+        if (m_stop) {
+            m_queuelocker.unlock();
+            break;
+        }
+
+        if (m_workqueue.empty()) {
             m_queuelocker.unlock();
             continue;
         }
+
         T* request = m_workqueue.front();
         m_workqueue.pop_front();
+
         m_queuelocker.unlock();
         if ( !request ) {
             continue;

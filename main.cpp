@@ -91,7 +91,7 @@ int main( int argc, char* argv[] ) {
                     continue;
                 } 
 
-                if( http_conn::m_user_count >= MAX_FD ) {
+                if( http_conn::m_user_count >= MAX_FD || connfd >= MAX_FD ) {
                     close(connfd);
                     continue;
                 }
@@ -103,9 +103,7 @@ int main( int argc, char* argv[] ) {
 
             } else if(events[i].events & EPOLLIN) {
 
-                if(users[sockfd].read()) {
-                    pool->append(users + sockfd);
-                } else {
+                if( !users[sockfd].read() ||  !pool->append(users + sockfd)) {
                     users[sockfd].close_conn();
                 }
 
@@ -119,9 +117,10 @@ int main( int argc, char* argv[] ) {
         }
     }
     
-    close( epollfd );
-    close( listenfd );
-    delete [] users;
-    delete pool;
+    delete pool;      // 必须先确保 worker 全退出
+    delete [] users;  // 再销毁 worker 所使用的任务对象
+
+    close(epollfd);
+    close(listenfd);
     return 0;
 }
