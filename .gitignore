@@ -13,6 +13,8 @@ install_manifest.txt
 # IDE
 .vscode/
 .idea/
+.clang-format
+.gitignore
 
 # 编译生成的可执行文件
 MiniWebServer
